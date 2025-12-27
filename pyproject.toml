@@ -1,0 +1,56 @@
+[tool.poetry]
+name = "doctalk"
+version = "0.1.0"
+description = "Enterprise RAG System for Document Discussion"
+authors = ["Your Name <your.email@example.com>"]
+readme = "README.md"
+packages = [{include = "doctalk", from = "src"}]
+
+[tool.poetry.dependencies]
+python = "~3.11"  # Compatible with your 3.11.9
+# Core Frameworks
+fastapi = "^0.110.0"
+uvicorn = {extras = ["standard"], version = "^0.27.0"}
+streamlit = "^1.31.0"
+python-multipart = "^0.0.9"  # For file uploads
+
+# AI & Orchestration
+langchain = "^0.1.12"
+langchain-community = "^0.0.28"
+langchain-openai = "^0.0.8"
+langchain-google-genai = "^0.0.9"
+langchain-text-splitters = "^0.0.1"
+
+# Vector Store & Data
+faiss-cpu = "^1.8.0"
+tiktoken = "^0.6.0"
+
+# Document Loaders
+pypdf = "^4.1.0"
+docx2txt = "^0.8"
+
+# Configuration & Utils
+python-dotenv = "^1.0.1"
+pydantic-settings = "^2.2.1"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.1.0"
+pytest-asyncio = "^0.23.5"  # For testing FastAPI
+httpx = "^0.27.0"           # For testing API endpoints
+ruff = "^0.3.4"             # Fast linting/formatting
+black = "^24.3.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+# --- Tool Configurations ---
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+asyncio_mode = "auto"
