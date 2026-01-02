@@ -6,14 +6,19 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
+# Assignment files and local tests
+src.txt
+assignment-description.docx
+
 # Environments
-.env
+.env.local
 .env.*
 !.env.example
 .venv
 env/
 venv/
 ENV/
+poetry.toml
 
 # Distribution / Build
 dist/
@@ -25,6 +30,7 @@ build/
 .coverage
 htmlcov/
 coverage.xml
+pytest*
 
 # IDEs
 .vscode/

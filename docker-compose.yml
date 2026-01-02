@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  # Backend API Service
+  api:
+    build:
+      context: .
+      target: runtime
+    container_name: doctalk-api
+    command: uvicorn src.api.chat:app --host 0.0.0.0 --port 8000 --workers 2
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env.local
+    environment:
+      - APP_ENV=production
+      - LOG_LEVEL=INFO
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - doctalk-net
+    restart: unless-stopped
+
+  # Frontend UI Service
+  ui:
+    build:
+      context: .
+      target: runtime
+    container_name: doctalk-ui
+    command: python -m streamlit run src/ui/chat.py --server.port 8501 --server.address 0.0.0.0
+    ports:
+      - "8501:8501"
+    environment:
+      # Docker networking: "api" resolves to the backend container IP
+      - APP_API_URL=http://api:8000
+    depends_on:
+      - api
+    networks:
+      - doctalk-net
+    restart: unless-stopped
+
+networks:
+  doctalk-net:
+    driver: bridge

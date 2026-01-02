@@ -1,0 +1,54 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+  pull_request:
+    branches: [ "main", "develop" ]
+
+jobs:
+  quality-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11.9
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11.9"
+
+      # --- Caching to speed up CI ---
+      - name: Load cached venv
+        id: cached-poetry-dependencies
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ hashFiles('**/poetry.lock') }}
+
+      - name: Install Poetry 2.2.1
+        run: |
+          pip install poetry==2.2.1
+
+      - name: Install Dependencies
+        # Only install if cache wasn't hit
+        if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
+        run: poetry install --with dev
+
+      - name: Lint Code (Ruff)
+        run: poetry run ruff check src tests
+
+      - name: Check Formatting (Black)
+        run: poetry run black --check src tests
+
+      - name: Run Tests
+        env:
+          # CRITICAL: Force the app to use the Mock Provider
+          # This ensures tests run without needing real API keys
+          LLM_PROVIDER: "mock"
+          APP_ENV: "testing"
+
+          # Dummies to satisfy Pydantic validation if needed
+          GOOGLE_API_KEY: "dummy"
+          OPENAI_API_KEY: "dummy"
+          PERPLEXITY_API_KEY: "dummy"
+        run: poetry run pytest tests/ -v

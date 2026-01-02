@@ -1,47 +1,54 @@
 [tool.poetry]
 name = "doctalk"
 version = "0.1.0"
-description = "Enterprise RAG System for Document Discussion"
-authors = ["Your Name <your.email@example.com>"]
+description = "DocTalk: A lightweight system for uploading documents (PDF/DOCX/MD) and receiving grounded, citation-backed answers strictly from the provided content."
+authors = ["Ali Negary <ali.negary@outlook.com>"]
 readme = "README.md"
-packages = [{include = "doctalk", from = "src"}]
+package-mode = false
 
 [tool.poetry.dependencies]
 python = "~3.11"  # Compatible with your 3.11.9
-# Core Frameworks
-fastapi = "^0.110.0"
-uvicorn = {extras = ["standard"], version = "^0.27.0"}
-streamlit = "^1.31.0"
-python-multipart = "^0.0.9"  # For file uploads
 
-# AI & Orchestration
-langchain = "^0.1.12"
-langchain-community = "^0.0.28"
-langchain-openai = "^0.0.8"
-langchain-google-genai = "^0.0.9"
-langchain-text-splitters = "^0.0.1"
+# --- Core Frameworks (Latest 2025 releases) ---
+fastapi = "^0.128.0"              # Major update: faster routing, better pydantic integration
+uvicorn = {extras = ["standard"], version = "^0.40.0"}
+streamlit = "^1.52.2"             # Major update: native charts, faster reruns
+python-multipart = "^0.0.20"      # Required for file uploads
+
+# --- AI & Orchestration (LangChain 1.x Stable) ---
+langchain = "^1.2.0"              # The first major stable release (released Oct 2025)
+langchain-core = "^1.1.8"         # Core interfaces, strictly Pydantic v2
+langchain-community = "^0.4.1"    # Companion to LangChain 1.x
+langchain-text-splitters = "^1.1.0"
+langchain-openai = "^1.1.6"       # Updated for 1.x compatibility
+langchain-google-genai = "^4.1.2" # Major Change: Google GenAI now uses the unified SDK (v4)
+langgraph = "^1.0.5"              # For graph orchestration
+langchain-ollama = "^1.0.1"       # Ollama integration
+ollama = "^0.6.1"                 # Ollama client
 
 # Vector Store & Data
-faiss-cpu = "^1.8.0"
-tiktoken = "^0.6.0"
+faiss-cpu = "^1.9.0"
+tiktoken = "^0.8.0"
 
 # Document Loaders
-pypdf = "^4.1.0"
+pypdf = "^6.5.0"
 docx2txt = "^0.8"
 
 # Configuration & Utils
 python-dotenv = "^1.0.1"
 pydantic-settings = "^2.2.1"
+structlog = "^25.5.0"             # For professional JSON logging
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^8.1.0"
-pytest-asyncio = "^0.23.5"  # For testing FastAPI
-httpx = "^0.27.0"           # For testing API endpoints
-ruff = "^0.3.4"             # Fast linting/formatting
-black = "^24.3.0"
+pytest = "^9.0.2"
+pytest-asyncio = "^1.3.0"  # For testing FastAPI
+httpx = "^0.28.1"           # For testing API endpoints
+ruff = "^0.14.10"             # Fast linting/formatting
+black = "^25.12.0"
+pre-commit = "^4.5.1"
 
 [build-system]
-requires = ["poetry-core"]
+requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
 
 # --- Tool Configurations ---
