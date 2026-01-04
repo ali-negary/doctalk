@@ -1,0 +1,23 @@
+ELECTRONIC TICKET RECEIPT
+Airline: SkyHigh Airways
+Date of Issue: 04 JAN 2026
+PNR: ZQ9-442
+
+PASSENGER DETAILS:
+Name: JOHN DOE
+Frequent Flyer: SH-8829104
+Seat: 12A (Window)
+
+FLIGHT SEGMENTS:
+Flight: SH101
+From: LONDON (LHR)
+To: NEW YORK (JFK)
+Departs: 10:00 AM
+Arrives: 01:00 PM (Local)
+
+PAYMENT SUMMARY:
+Base Fare: $800.00
+Taxes & Fees: $150.00
+Fuel Surcharge: $50.00
+TOTAL PAID: $1,000.00
+Method: VISA **** 4242

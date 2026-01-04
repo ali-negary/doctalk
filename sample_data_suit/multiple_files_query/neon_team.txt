@@ -1,0 +1,6 @@
+EmployeeID, Name, Role, Allocation, Email
+DEV-101, Alice Johnson, Senior Frontend Dev, 100%, alice@company.com
+DEV-102, Bob Smith, Backend Engineer, 50%, bob@company.com
+QA-204, Charlie Davis, QA Lead, 100%, charlie@company.com
+PM-305, Diana Prince, Product Manager, 100%, diana@company.com
+DES-401, Eve Miller, UI/UX Designer, 25%, eve@company.com

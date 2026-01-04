@@ -1,0 +1,19 @@
+PROJECT NEON: PRODUCT REQUIREMENTS DOCUMENT (PRD)
+Version: 1.2
+Date: 2025-02-10
+
+1. Overview
+Project Neon is a new mobile dashboard for our existing analytics platform. It allows users to view real-time data charts on iOS and Android.
+
+2. Core Features
+- Real-time WebSocket connection for live data.
+- Offline mode: Cache last known data for up to 24 hours.
+- Dark Mode support (mandatory for release).
+
+3. Technical Constraints
+- Must use React Native.
+- Maximum app size: 50MB.
+- API Response time target: <200ms.
+
+4. Dependencies
+- Requires the new "Helios" API backend (see system_architecture.md).
