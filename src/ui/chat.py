@@ -17,7 +17,6 @@ def configure_logging():
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.processors.JSONRenderer(),
     ]
-
     structlog.configure(
         processors=processors,
         logger_factory=structlog.PrintLoggerFactory(),
@@ -31,9 +30,32 @@ logger = configure_logging()
 # --- 2. Configuration & State ---
 st.set_page_config(page_title="DocTalk AI", page_icon="📄", layout="wide")
 
+# Custom CSS for UI Polish
+st.markdown(
+    """
+    <style>
+    /* Hide the 'Deploy' button */
+    .stDeployButton {display:none !important;}
+    [data-testid="stDeployButton"] {display:none !important;}
+
+    /* Style the Sources Expander Header */
+    .streamlit-expanderHeader {
+        font-weight: bold;
+        color: #0e1117;
+    }
+
+    /* Clean top padding */
+    .block-container {
+        padding-top: 2rem;
+    }
+    </style>
+""",
+    unsafe_allow_html=True,
+)
+
 API_BASE_URL = _settings.APP_API_URL
 
-# Session State Initialization
+# Session Initialization
 if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
     logger.info("new_session_started", session_id=st.session_state.session_id)
@@ -50,143 +72,147 @@ if "messages" not in st.session_state:
 log = logger.bind(session_id=st.session_state.session_id)
 
 
-# --- 3. Sidebar: Health Check & Upload ---
+# --- 3. Sidebar: Document Manager ---
 with st.sidebar:
-    st.header("📁 Document Manager")
+    st.header("📂 Document Manager")
 
-    # Auto-Health Check (Visual Indicator)
+    # API Status Check
     try:
-        health_check = requests.get(f"{API_BASE_URL}/health", timeout=2)
-        if health_check.status_code == 200:
-            st.success("🟢 API Online")
+        if requests.get(f"{API_BASE_URL}/health", timeout=1).status_code == 200:
+            st.success("🟢 System Online")
         else:
-            st.warning(f"🟡 API Initializing ({health_check.status_code})")
-    except requests.exceptions.ConnectionError:
-        st.error("🔴 API Offline")
-        log.error("api_health_check_failed", url=API_BASE_URL)
+            st.warning("🟡 System Initializing")
+    except requests.exceptions.RequestException:
+        # Specific catch for connection issues
+        st.error("🔴 Backend Offline")
+    except Exception as e:
+        # Catch-all for other weird errors (like URL parsing issues)
+        st.error(f"🔴 System Error: {e}")
 
-    st.caption(f"Session: {st.session_state.session_id[-8:]}")
+    st.markdown("---")
 
+    # File Uploader
     uploaded_files = st.file_uploader(
-        "Upload PDF, DOCX, or TXT",
+        "Upload Documents (Max 2MB)",
         type=["pdf", "docx", "txt", "md"],
         accept_multiple_files=True,
+        help="Supported formats: PDF, Word, Text. Limit 2MB per file.",
     )
 
-    if uploaded_files and st.button("Ingest Documents", type="primary"):
-        with st.spinner("Ingesting and Indexing..."):
-            log.info("upload_initiated", file_count=len(uploaded_files))
-            try:
-                # Prepare payload
-                files = [
-                    ("files", (f.name, f.getvalue(), f.type)) for f in uploaded_files
-                ]
-                headers = {"X-Session-ID": st.session_state.session_id}
+    # File Size Check
+    valid_files = []
+    if uploaded_files:
+        for f in uploaded_files:
+            if f.size > 2 * 1024 * 1024:  # 2MB Limit
+                st.error(f"❌ {f.name} is too large (>2MB).")
+            else:
+                valid_files.append(f)
 
-                # Call API
-                response = requests.post(
-                    f"{API_BASE_URL}/upload", files=files, headers=headers
-                )
+    # Ingest Button
+    if valid_files:
+        if st.button("🚀 Ingest Documents", type="primary", use_container_width=True):
+            with st.spinner(f"Processing {len(valid_files)} files..."):
+                log.info("upload_initiated", count=len(valid_files))
+                try:
+                    files = [
+                        ("files", (f.name, f.getvalue(), f.type)) for f in valid_files
+                    ]
+                    headers = {"X-Session-ID": st.session_state.session_id}
 
-                if response.status_code == 200:
-                    data = response.json()
-                    st.success(
-                        f"✅ Indexed {data['chunks_processed']} chunks from {len(data['files_processed'])} files."
-                    )
-                    log.info("upload_success", chunks=data["chunks_processed"])
-                else:
-                    st.error(f"❌ Error {response.status_code}: {response.text}")
-                    log.error(
-                        "upload_failed",
-                        status=response.status_code,
-                        error=response.text,
+                    res = requests.post(
+                        f"{API_BASE_URL}/upload", files=files, headers=headers
                     )
 
-            except requests.exceptions.ConnectionError:
-                st.error("❌ Could not connect to the API. Is the backend running?")
-            except Exception as e:
-                st.error(f"❌ An unexpected error occurred: {e}")
-                log.error("upload_exception", error=str(e))
+                    if res.status_code == 200:
+                        data = res.json()
+                        st.success(f"✅ Indexed {data['chunks_processed']} chunks.")
+                        log.info("upload_success", chunks=data["chunks_processed"])
+                    else:
+                        st.error(f"❌ Error: {res.text}")
+                        log.error("upload_failed", error=res.text)
+                except Exception as e:
+                    st.error(f"❌ Error: {e}")
+                    log.error("upload_exception", error=str(e))
 
     st.markdown("---")
     with st.expander("🛠️ Debug Info"):
         st.json(
             {
-                "API_URL": API_BASE_URL,
+                "API": API_BASE_URL,
                 "Session": st.session_state.session_id,
-                "LLM Provider": _settings.LLM_PROVIDER,
+                "Provider": _settings.LLM_PROVIDER,
             }
         )
 
 
 # --- 4. Main Chat Interface ---
 st.title("🤖 DocTalk: Discuss Your Documents")
+st.caption("Secure, Private Document Assistant")
 
 # Display History
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+# We loop through history first so everything persists correctly on rerun
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
-# Handle User Input
-if prompt := st.chat_input("Ask a question about your documents..."):
-    # Log the interaction
-    log.info("user_query_received", query_length=len(prompt))
 
-    # A. Display User Message
+# Input Handling
+if prompt := st.chat_input("Ask about your documents..."):
+    # 1. Log and Display User Query
+    log.info("user_query", length=len(prompt))
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # B. Call API
+    # 2. Generate Response
     with st.chat_message("assistant"):
-        message_placeholder = st.empty()
-        message_placeholder.markdown("Thinking...")
+        # Create a placeholder for the "Thinking..." state
+        placeholder = st.empty()
+        placeholder.markdown("Thinking...")
 
         try:
-            payload = {"message": prompt}
             headers = {"X-Session-ID": st.session_state.session_id}
-
-            response = requests.post(
-                f"{API_BASE_URL}/chat", json=payload, headers=headers
+            res = requests.post(
+                f"{API_BASE_URL}/chat", json={"message": prompt}, headers=headers
             )
 
-            if response.status_code == 200:
-                data = response.json()
+            if res.status_code == 200:
+                data = res.json()
                 answer = data["answer"]
                 citations = data.get("citations", [])
 
-                # Format Citations
-                if citations:
-                    answer += "\n\n**Sources:**\n"
-                    for cit in citations:
-                        answer += f"- *{cit['source']}*: \"{cit['text']}\"\n"
-
-                # Display Answer
-                message_placeholder.markdown(answer)
-
-                # Save to History
+                # A. Save to History IMMEDIATELY
+                # This ensures that if the script reruns, the answer is already in the list above.
                 st.session_state.messages.append(
                     {"role": "assistant", "content": answer}
                 )
-                log.info("chat_response_delivered", citation_count=len(citations))
+
+                # B. Render the Answer (Overwriting "Thinking...")
+                placeholder.markdown(answer)
+
+                # C. Render Citations (The Senior Polish)
+                if citations:
+                    grouped = {}
+                    for c in citations:
+                        grouped.setdefault(c["source"], []).append(c["text"])
+
+                    # Create a NEW container below the answer for citations
+                    with st.expander("📚 View Sources", expanded=False):
+                        for src, texts in grouped.items():
+                            st.markdown(f"**📄 {src}**")
+                            for t in texts:
+                                st.caption(f'• "{t}"')
+
+                log.info("chat_success", citations=len(citations))
 
             else:
-                error_msg = f"Error {response.status_code}: {response.text}"
-                message_placeholder.error(error_msg)
+                err_msg = f"Error {res.status_code}: {res.text}"
+                placeholder.error(err_msg)
                 st.session_state.messages.append(
-                    {"role": "assistant", "content": error_msg}
+                    {"role": "assistant", "content": err_msg}
                 )
-                log.error(
-                    "chat_api_error",
-                    status=response.status_code,
-                    response=response.text,
-                )
+                log.error("chat_error", status=res.status_code)
 
-        except requests.exceptions.ConnectionError:
-            error_msg = f"❌ Could not connect to {API_BASE_URL}."
-            message_placeholder.error(error_msg)
-            log.critical("chat_connection_failed", url=API_BASE_URL)
         except Exception as e:
-            error_msg = f"❌ An error occurred: {str(e)}"
-            message_placeholder.error(error_msg)
-            log.error("chat_exception", error=str(e))
+            placeholder.error(f"Connection Error: {e}")
+            log.critical("chat_connection_fail", error=str(e))

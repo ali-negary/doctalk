@@ -106,7 +106,7 @@ class GeminiProvider(ILLMProvider):
         )
 
 
-class OpenAIProvider(ILLMProvider):
+class OpenAIProvider(ILLMProvider):  # NOT TESTED
     def get_chat_model(self) -> BaseChatModel:
         if not _settings.OPENAI_API_KEY:
             logger.error(
@@ -150,7 +150,7 @@ class OllamaProvider(ILLMProvider):
         )
 
 
-class PerplexityProvider(ILLMProvider):
+class PerplexityProvider(ILLMProvider):  # NOT TESTED
     def get_chat_model(self) -> BaseChatModel:
         if not _settings.PERPLEXITY_API_KEY:
             logger.error(
@@ -196,14 +196,14 @@ class LLMFactory:
 
         if provider == _LLMProviderType.GEMINI:
             return GeminiProvider()
-        elif provider == _LLMProviderType.OPENAI:
-            return OpenAIProvider()
         elif provider == _LLMProviderType.OLLAMA:
             return OllamaProvider()
-        elif provider == _LLMProviderType.PERPLEXITY:
-            return PerplexityProvider()
         elif provider == _LLMProviderType.MOCK:
             return MockProvider()
+        # elif provider == _LLMProviderType.OPENAI:
+        #     return OpenAIProvider()
+        # elif provider == _LLMProviderType.PERPLEXITY:
+        #     return PerplexityProvider()
         else:
             logger.critical("provider_not_implemented", provider=provider)
             raise NotImplementedError(f"Provider {provider} not implemented")
