@@ -22,7 +22,7 @@ class Settings(BaseSettings):
 
     LLM_PROVIDER: LLMProviderType = Field(default=LLMProviderType.GEMINI)
 
-    GOOGLE_API_KEY: str | None = None
+    GEMINI_API_KEY: str | None = None
     OPENAI_API_KEY: str | None = None
     OLLAMA_API_KEY: str | None = None
     PERPLEXITY_API_KEY: str | None = None
@@ -32,7 +32,8 @@ class Settings(BaseSettings):
     CHUNK_OVERLAP: int = 200
 
     # Model Specifics
-    GEMINI_MODEL: str = "gemini-pro"
+    GEMINI_MODEL: str = "gemini-2.5-flash-lite"
+    GEMINI_EMBEDDING_MODEL: str = "models/text-embedding-004"
     OPENAI_MODEL: str = "gpt-4-turbo"
     PERPLEXITY_MODEL: str = "llama-3.1-sonar-small-128k-online"
     OLLAMA_MODEL: str = "llama3"

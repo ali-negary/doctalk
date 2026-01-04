@@ -82,7 +82,7 @@ class MockProvider(ILLMProvider):
 
 class GeminiProvider(ILLMProvider):
     def get_chat_model(self) -> BaseChatModel:
-        if not _settings.GOOGLE_API_KEY:
+        if not _settings.GEMINI_API_KEY:
             logger.error(
                 "provider_config_error", provider="gemini", missing="GOOGLE_API_KEY"
             )
@@ -93,16 +93,17 @@ class GeminiProvider(ILLMProvider):
         )
         return ChatGoogleGenerativeAI(
             model=_settings.GEMINI_MODEL,
-            google_api_key=_settings.GOOGLE_API_KEY,
+            google_api_key=_settings.GEMINI_API_KEY,
             temperature=0.2,
             convert_system_message_to_human=True,
         )
 
     def get_embeddings(self) -> Embeddings:
-        if not _settings.GOOGLE_API_KEY:
+        if not _settings.GEMINI_API_KEY:
             raise ValueError("GOOGLE_API_KEY is missing in .env")
         return GoogleGenerativeAIEmbeddings(
-            model="models/embedding-001", google_api_key=_settings.GOOGLE_API_KEY
+            model=_settings.GEMINI_EMBEDDING_MODEL,
+            google_api_key=_settings.GEMINI_API_KEY,
         )
 
 
