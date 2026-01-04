@@ -1,4 +1,5 @@
 import asyncio
+import re
 from typing import List, Dict, Any, Tuple, Optional, TypedDict
 
 from langchain_community.vectorstores import FAISS
@@ -153,7 +154,7 @@ class RAGEngine:
         return {"is_safe": True}
 
     async def _generate_node(self, state: GraphState):
-        """Node: Generate Answer with Table Formatting"""
+        """Node: Generate Answer with Table Formatting & Self-Correction"""
         question = state["question"]
         documents = state["documents"]
 
@@ -172,21 +173,29 @@ class RAGEngine:
 
             return {"generation": "I cannot find the answer in the provided documents."}
 
-        context = "\n\n".join([doc.page_content for doc in documents])
+        # --- CHANGED: Build Context with explicit Source IDs ---
+        context_parts = []
+        for doc in documents:
+            source_name = doc.metadata.get("source", "unknown")
+            context_parts.append(f"Source: {source_name}\nContent: {doc.page_content}")
 
-        # 2. PROMPT WITH FORMATTING INSTRUCTIONS
+        context = "\n\n---\n\n".join(context_parts)
+
+        # --- CHANGED: Prompt asks for explicit Source Listing ---
         prompt = ChatPromptTemplate.from_template(
             """You are a professional AI assistant analyzing internal documents.
 
             Instructions:
             1. Answer the user's question based ONLY on the following context.
             2. **Format Logic:**
-               - If the data is structured (like a ticket, invoice, or schedule), **YOU MUST USE A MARKDOWN TABLE**.
-               - Use **bold** for key entities (Names, Dates, IDs, Amounts).
-               - Keep it concise.
-            3. **Follow-up:**
-               - At the very end, add a section starting with "**Suggested Next Steps:**"
-               - List 2 short, relevant follow-up questions the user might want to ask based on this document (e.g., "What is the total tax amount?" or "Who is the passenger?").
+               - If the data is structured, **YOU MUST USE A MARKDOWN TABLE**.
+               - Use **bold** for key entities.
+            3. **Citation Check:** - At the very end of your response, output a single line listing ONLY the sources you actually used to answer.
+               - Format: `SOURCES: [filename1.pdf, filename2.docx]`
+               - If you didn't use any source, output `SOURCES: []`.
+            4. **Follow-up:**
+               - Before the citation line, add a section starting with "**Suggested Next Steps:**"
+               - List 2 short, relevant follow-up questions.
 
             <context>
             {context}
@@ -196,13 +205,47 @@ class RAGEngine:
             """
         )
 
-        # Standard LCEL Chain
+        # Standard LCEL Chain - Note: Do not change this
         chain = prompt | self.llm | StrOutputParser()
 
         try:
             logger.info("generating_answer", context_length=len(context))
-            response = await chain.ainvoke({"question": question, "context": context})
-            return {"generation": response}
+            raw_response = await chain.ainvoke(
+                {"question": question, "context": context}
+            )
+
+            # --- Parse and Filter Logic ---
+            final_answer = raw_response
+
+            # Regex to find "SOURCES: [...]" at the end
+            match = re.search(
+                r"SOURCES: \[(.*?)\]", raw_response, re.DOTALL | re.IGNORECASE
+            )
+
+            if match:
+                # 1. Extract filenames from the LLM response
+                source_str = match.group(1)
+                used_filenames = [s.strip() for s in source_str.split(",") if s.strip()]
+
+                # 2. Filter the original 'documents' list
+                # We keep a document ONLY if its source was mentioned by the LLM
+                filtered_docs = []
+                for doc in documents:
+                    doc_source = doc.metadata.get("source", "").lower()
+                    # Loose matching (e.g. "ticket.pdf" matches "Ticket.pdf")
+                    if any(u.lower() in doc_source for u in used_filenames):
+                        filtered_docs.append(doc)
+
+                # Update the documents list to only include what was really used
+                if filtered_docs:
+                    documents = filtered_docs
+
+                # 3. Clean the answer (Remove the SOURCES line so user doesn't see it)
+                final_answer = raw_response.replace(match.group(0), "").strip()
+
+            # Return BOTH the cleaned answer AND the filtered documents
+            return {"generation": final_answer, "documents": documents}
+
         except Exception as e:
             logger.error("generation_failed", error=str(e), exc_info=True)
             return {"generation": f"Error generating answer: {e}"}
