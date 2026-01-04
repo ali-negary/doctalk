@@ -40,7 +40,7 @@ jobs:
       - name: Check Formatting (Black)
         run: poetry run black --check src tests
 
-      - name: Run Tests
+      - name: Run Tests with Coverage
         env:
           # CRITICAL: Force the app to use the Mock Provider
           # This ensures tests run without needing real API keys
@@ -48,7 +48,8 @@ jobs:
           APP_ENV: "testing"
 
           # Dummies to satisfy Pydantic validation if needed
-          GOOGLE_API_KEY: "dummy"
+          GEMINI_API_KEY: "dummy"
           OPENAI_API_KEY: "dummy"
           PERPLEXITY_API_KEY: "dummy"
-        run: poetry run pytest tests/ -v
+        # UPDATED COMMAND:
+        run: poetry run pytest --cov=src --cov-report=term-missing tests/ -v

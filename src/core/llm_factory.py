@@ -18,11 +18,9 @@ logger = structlog.get_logger(__name__)
 class ILLMProvider(Protocol):
     """Interface for any LLM Provider (Gemini, OpenAI, etc)."""
 
-    def get_chat_model(self) -> BaseChatModel:
-        ...
+    def get_chat_model(self) -> BaseChatModel: ...
 
-    def get_embeddings(self) -> Embeddings:
-        ...
+    def get_embeddings(self) -> Embeddings: ...
 
 
 # --- MOCK CLASSES (For Testing & CI) ---
@@ -84,9 +82,9 @@ class GeminiProvider(ILLMProvider):
     def get_chat_model(self) -> BaseChatModel:
         if not _settings.GEMINI_API_KEY:
             logger.error(
-                "provider_config_error", provider="gemini", missing="GOOGLE_API_KEY"
+                "provider_config_error", provider="gemini", missing="GEMINI_API_KEY"
             )
-            raise ValueError("GOOGLE_API_KEY is missing in .env")
+            raise ValueError("GEMINI_API_KEY is missing in .env")
 
         logger.debug(
             "initializing_llm", provider="gemini", model=_settings.GEMINI_MODEL
@@ -100,7 +98,7 @@ class GeminiProvider(ILLMProvider):
 
     def get_embeddings(self) -> Embeddings:
         if not _settings.GEMINI_API_KEY:
-            raise ValueError("GOOGLE_API_KEY is missing in .env")
+            raise ValueError("GEMINI_API_KEY is missing in .env")
         return GoogleGenerativeAIEmbeddings(
             model=_settings.GEMINI_EMBEDDING_MODEL,
             google_api_key=_settings.GEMINI_API_KEY,
