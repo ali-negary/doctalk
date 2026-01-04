@@ -2,18 +2,41 @@ import uuid
 
 import requests
 import streamlit as st
+import structlog
 
 from src.core.config import settings as _settings
 
 
-API_BASE_URL = _settings.APP_API_URL
+# --- 1. Logging Configuration (Cached Resource) ---
+# We use st.cache_resource so logging isn't re-initialized on every button click
+@st.cache_resource
+def configure_logging():
+    processors = [
+        structlog.contextvars.merge_contextvars,
+        structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.JSONRenderer(),
+    ]
 
-# 1. Page Configuration
+    structlog.configure(
+        processors=processors,
+        logger_factory=structlog.PrintLoggerFactory(),
+    )
+    return structlog.get_logger()
+
+
+logger = configure_logging()
+
+
+# --- 2. Configuration & State ---
 st.set_page_config(page_title="DocTalk AI", page_icon="📄", layout="wide")
 
-# 2. Session State Initialization
+API_BASE_URL = _settings.APP_API_URL
+
+# Session State Initialization
 if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
+    logger.info("new_session_started", session_id=st.session_state.session_id)
 
 if "messages" not in st.session_state:
     st.session_state.messages = [
@@ -23,10 +46,26 @@ if "messages" not in st.session_state:
         }
     ]
 
-# 3. Sidebar: Document Ingestion
+# Bind session ID to logger for all subsequent calls
+log = logger.bind(session_id=st.session_state.session_id)
+
+
+# --- 3. Sidebar: Health Check & Upload ---
 with st.sidebar:
     st.header("📁 Document Manager")
-    st.caption(f"Session ID: {st.session_state.session_id[-8:]}...")
+
+    # Auto-Health Check (Visual Indicator)
+    try:
+        health_check = requests.get(f"{API_BASE_URL}/health", timeout=2)
+        if health_check.status_code == 200:
+            st.success("🟢 API Online")
+        else:
+            st.warning(f"🟡 API Initializing ({health_check.status_code})")
+    except requests.exceptions.ConnectionError:
+        st.error("🔴 API Offline")
+        log.error("api_health_check_failed", url=API_BASE_URL)
+
+    st.caption(f"Session: {st.session_state.session_id[-8:]}")
 
     uploaded_files = st.file_uploader(
         "Upload PDF, DOCX, or TXT",
@@ -36,6 +75,7 @@ with st.sidebar:
 
     if uploaded_files and st.button("Ingest Documents", type="primary"):
         with st.spinner("Ingesting and Indexing..."):
+            log.info("upload_initiated", file_count=len(uploaded_files))
             try:
                 # Prepare payload
                 files = [
@@ -53,20 +93,33 @@ with st.sidebar:
                     st.success(
                         f"✅ Indexed {data['chunks_processed']} chunks from {len(data['files_processed'])} files."
                     )
+                    log.info("upload_success", chunks=data["chunks_processed"])
                 else:
                     st.error(f"❌ Error {response.status_code}: {response.text}")
+                    log.error(
+                        "upload_failed",
+                        status=response.status_code,
+                        error=response.text,
+                    )
 
             except requests.exceptions.ConnectionError:
                 st.error("❌ Could not connect to the API. Is the backend running?")
             except Exception as e:
                 st.error(f"❌ An unexpected error occurred: {e}")
+                log.error("upload_exception", error=str(e))
 
     st.markdown("---")
-    st.markdown("### 🛠️ Debug Info")
-    st.json({"API_URL": API_BASE_URL, "Session": st.session_state.session_id})
+    with st.expander("🛠️ Debug Info"):
+        st.json(
+            {
+                "API_URL": API_BASE_URL,
+                "Session": st.session_state.session_id,
+                "LLM Provider": _settings.LLM_PROVIDER,
+            }
+        )
 
 
-# 5. Main Chat Interface
+# --- 4. Main Chat Interface ---
 st.title("🤖 DocTalk: Discuss Your Documents")
 
 # Display History
@@ -76,6 +129,9 @@ for message in st.session_state.messages:
 
 # Handle User Input
 if prompt := st.chat_input("Ask a question about your documents..."):
+    # Log the interaction
+    log.info("user_query_received", query_length=len(prompt))
+
     # A. Display User Message
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
@@ -112,6 +168,7 @@ if prompt := st.chat_input("Ask a question about your documents..."):
                 st.session_state.messages.append(
                     {"role": "assistant", "content": answer}
                 )
+                log.info("chat_response_delivered", citation_count=len(citations))
 
             else:
                 error_msg = f"Error {response.status_code}: {response.text}"
@@ -119,10 +176,17 @@ if prompt := st.chat_input("Ask a question about your documents..."):
                 st.session_state.messages.append(
                     {"role": "assistant", "content": error_msg}
                 )
+                log.error(
+                    "chat_api_error",
+                    status=response.status_code,
+                    response=response.text,
+                )
 
         except requests.exceptions.ConnectionError:
-            error_msg = "❌ Could not connect to the Backend API."
+            error_msg = f"❌ Could not connect to {API_BASE_URL}."
             message_placeholder.error(error_msg)
+            log.critical("chat_connection_failed", url=API_BASE_URL)
         except Exception as e:
             error_msg = f"❌ An error occurred: {str(e)}"
             message_placeholder.error(error_msg)
+            log.error("chat_exception", error=str(e))

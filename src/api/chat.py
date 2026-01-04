@@ -3,7 +3,9 @@ from typing import List, Annotated
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, status, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
+import structlog
 
+from src.core.config import settings
 from src.core.rag import RAGEngine as _RAGEngine
 from src.core.session import SessionManager as _SessionManager
 from src.api.schemas import (
@@ -12,6 +14,8 @@ from src.api.schemas import (
     UploadResponse as _UploadResponse,
 )
 
+# Initialize global logger for the module
+logger = structlog.get_logger(__name__)
 
 # Global Session Manager instance
 session_manager: _SessionManager | None = None
@@ -24,20 +28,27 @@ async def lifespan(app: FastAPI):
     Initializes the Session Manager on startup.
     """
     global session_manager
-    print("Startup: Initializing Session Manager...")
+    logger.info("startup_initializing", component="session_manager")
+    logger.info(
+        "startup_configuration",
+        app_env=settings.APP_ENV,
+        llm_provider=settings.LLM_PROVIDER,
+        api_url=settings.APP_API_URL,
+    )
     try:
         session_manager = _SessionManager()
-        print("Startup: Session Manager Ready.")
+        logger.info("startup_complete", component="session_manager", status="ready")
     except Exception as e:
-        print(f"Startup Failed: {e}")
+        logger.critical("startup_failed", error=str(e), exc_info=True)
         # In production, crash strictly if critical dependencies fail
         # raise e
 
     yield
 
     # Cleanup
-    print("Shutdown: Cleaning up resources...")
+    logger.info("shutdown_started")
     session_manager = None
+    logger.info("shutdown_complete")
 
 
 app = FastAPI(
@@ -65,17 +76,21 @@ async def get_rag_engine(
     Extracts the Session ID from headers and retrieves/creates the specific RAG Engine.
     """
     if not session_manager:
+        logger.error("service_unavailable", reason="session_manager_not_initialized")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="System is not initialized",
         )
 
     if not x_session_id:
+        logger.warn("bad_request", reason="missing_session_id")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="X-Session-ID header is required",
         )
 
+    # Note: We don't log every 'get_engine' call to avoid noise,
+    # but the binding in the endpoints will capture the session_id.
     return session_manager.get_engine(x_session_id)
 
 
@@ -86,6 +101,9 @@ async def get_rag_engine(
 async def health_check():
     """Kubernetes/Azure readiness probe."""
     is_ready = session_manager is not None
+
+    logger.debug("health_check", status="ok" if is_ready else "initializing")
+
     return {"status": "ok" if is_ready else "initializing", "service": "doctalk-api"}
 
 
@@ -93,28 +111,35 @@ async def health_check():
 async def upload_documents(
     files: List[UploadFile] = File(...),
     rag_engine: _RAGEngine = Depends(get_rag_engine),
+    x_session_id: str = Header(...),  # Capture explicitly for logging context
 ):
     """
     Ingests files (PDF, DOCX, TXT) into the user's specific session.
     """
+    # Bind session_id to logger so all logs in this function have it
+    log = logger.bind(session_id=x_session_id, handler="upload_documents")
+
     if not files:
+        log.warn("upload_failed", reason="no_files_provided")
         raise HTTPException(status_code=400, detail="No files provided")
 
-    # Read files into memory
-    # Note: large file streaming is skipped for assignment scope,
-    # but we acknowledge it as a production improvement.
     file_data = []
     filenames = []
 
     try:
+        log.info("upload_started", file_count=len(files))
+
         for file in files:
             content = await file.read()
             file_data.append((content, file.filename))
             filenames.append(file.filename)
 
         # Call the ASYNC ingest method
-        # This now awaits the thread pool execution, keeping the API responsive
         count = await rag_engine.ingest_files(file_data)
+
+        log.info(
+            "ingestion_complete", chunks_processed=count, files_processed=filenames
+        )
 
         return _UploadResponse(
             message="Ingestion successful",
@@ -123,22 +148,35 @@ async def upload_documents(
         )
 
     except Exception as e:
-        # Log the error with structured logging in production
-        print(f"Upload Error: {e}")
+        log.error("upload_error", error=str(e), filenames=filenames, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")
 
 
 @app.post("/chat", response_model=_ChatResponse, tags=["Chat"])
-async def chat(request: _ChatRequest, rag_engine: _RAGEngine = Depends(get_rag_engine)):
+async def chat(
+    request: _ChatRequest,
+    rag_engine: _RAGEngine = Depends(get_rag_engine),
+    x_session_id: str = Header(...),  # Capture explicitly for logging context
+):
     """
     Asks a question to the user's specific RAG engine.
     """
+    # Bind session_id to logger so all logs in this function have it
+    log = logger.bind(session_id=x_session_id, handler="chat")
+
     try:
+        log.info("chat_request_received", question_length=len(request.message))
+
         # Call the ASYNC ask method
         response = await rag_engine.ask(request.message)
+
+        log.info(
+            "chat_response_generated", citation_count=len(response.get("citations", []))
+        )
         return response
+
     except Exception as e:
-        print(f"Chat Error: {e}")
+        log.error("chat_error", error=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
 
 
@@ -146,4 +184,5 @@ async def chat(request: _ChatRequest, rag_engine: _RAGEngine = Depends(get_rag_e
 if __name__ == "__main__":
     import uvicorn
 
+    # Structlog will already be configured by the import of settings/config logic
     uvicorn.run(app, host="0.0.0.0", port=8000)

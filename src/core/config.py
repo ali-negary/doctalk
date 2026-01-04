@@ -1,4 +1,5 @@
 from enum import Enum
+import logging
 
 import structlog
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -37,7 +38,6 @@ class Settings(BaseSettings):
     OLLAMA_MODEL: str = "llama3"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
 
-    # Pydantic Config to read .env.local file
     model_config = SettingsConfigDict(env_file=".env.local", extra="ignore")
 
 
@@ -45,9 +45,34 @@ class Settings(BaseSettings):
 settings = Settings()
 
 
-# Configure Logging
-structlog.configure(
-    processors=[structlog.processors.JSONRenderer()],
-    context_class=dict,
-    logger_factory=structlog.PrintLoggerFactory(),
-)
+# Logging
+def configure_logging():
+    # Processors that are common to both JSON and Console logging
+    processors = [
+        structlog.contextvars.merge_contextvars,  # Merge context vars (e.g. session_id bound in API)
+        structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.processors.CallsiteParameterAdder(
+            {
+                structlog.processors.CallsiteParameter.FILENAME,
+                structlog.processors.CallsiteParameter.FUNC_NAME,
+                structlog.processors.CallsiteParameter.LINENO,
+            }
+        ),
+        structlog.processors.JSONRenderer(),  # Use JSON rendering for production/structured logs
+    ]
+
+    structlog.configure(
+        processors=processors,
+        context_class=dict,
+        logger_factory=structlog.PrintLoggerFactory(),
+        wrapper_class=structlog.make_filtering_bound_logger(
+            logging.getLevelName(settings.LOG_LEVEL.upper())
+        ),
+        cache_logger_on_first_use=True,
+    )
+
+
+configure_logging()

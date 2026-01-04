@@ -1,4 +1,3 @@
-# src/core/rag.py
 import asyncio
 from typing import List, Dict, Any, Tuple, Optional, TypedDict
 
@@ -7,9 +6,13 @@ from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langgraph.graph import StateGraph, END
+import structlog
 
 from src.core.llm_factory import LLMFactory
 from src.core.ingestion import IngestionEngine
+
+# Initialize Logger
+logger = structlog.get_logger(__name__)
 
 
 # --- State Definition for LangGraph ---
@@ -26,6 +29,8 @@ class GraphState(TypedDict):
 
 class RAGEngine:
     def __init__(self):
+        logger.info("rag_engine_initializing")
+
         self.provider = LLMFactory().get_provider()
         self.llm = self.provider.get_chat_model()
         self.embeddings = self.provider.get_embeddings()
@@ -37,6 +42,8 @@ class RAGEngine:
         # Build the Agentic Graph
         self.app = self._build_graph()
 
+        logger.info("rag_engine_ready")
+
     # ---------------------------------------------------------
     # 1. Ingestion Logic (Restored)
     # ---------------------------------------------------------
@@ -45,19 +52,24 @@ class RAGEngine:
         return await loop.run_in_executor(None, self._ingest_sync, files)
 
     def _ingest_sync(self, files: List[Tuple[bytes, str]]) -> int:
+        log = logger.bind(file_count=len(files))
         all_chunks = []
+
         for file_bytes, filename in files:
             chunks = self.ingestion.process_file(file_bytes, filename)
             all_chunks.extend(chunks)
 
         if not all_chunks:
+            log.warn("ingest_no_chunks_generated")
             return 0
 
         # Create or Update Vector Store
         if self.vector_store:
             self.vector_store.add_documents(all_chunks)
+            log.info("vector_store_updated", added_chunks=len(all_chunks))
         else:
             self.vector_store = FAISS.from_documents(all_chunks, self.embeddings)
+            log.info("vector_store_created", initial_chunks=len(all_chunks))
 
         return len(all_chunks)
 
@@ -92,18 +104,26 @@ class RAGEngine:
     async def _retrieve_node(self, state: GraphState):
         """Node: Fetch documents from Vector Store"""
         question = state["question"]
+
         if not self.vector_store:
+            logger.warn("retrieval_skipped", reason="empty_vector_store")
             return {"documents": []}
 
         # Retrieve top 3
+        # Log the search query for debugging retrieval quality
+        logger.debug("retrieving_documents", query=question)
+
         retriever = self.vector_store.as_retriever(search_kwargs={"k": 3})
         documents = retriever.invoke(question)
+
+        logger.info("retrieval_complete", doc_count=len(documents))
         return {"documents": documents}
 
     async def _grade_documents_node(self, state: GraphState):
         """Node: Filter out irrelevant documents (Grounding Check)"""
         # For this MVP, we pass all docs through, but we could add an LLM check here.
         # This placeholder node allows us to add 'Guardrails' later easily.
+        logger.debug("grading_documents", doc_count=len(state["documents"]))
         return {"documents": state["documents"]}
 
     async def _generate_node(self, state: GraphState):
@@ -112,6 +132,7 @@ class RAGEngine:
         documents = state["documents"]
 
         if not documents:
+            logger.info("generation_skipped", reason="no_context")
             return {
                 "generation": "I'm sorry, I don't have any knowledge about that yet. Please upload a document."
             }
@@ -136,9 +157,11 @@ class RAGEngine:
         chain = prompt | self.llm | StrOutputParser()
 
         try:
+            logger.info("generating_answer", context_length=len(context))
             response = await chain.ainvoke({"question": question, "context": context})
             return {"generation": response}
         except Exception as e:
+            logger.error("generation_failed", error=str(e), exc_info=True)
             return {"generation": f"Error generating answer: {e}"}
 
     # ---------------------------------------------------------
@@ -146,6 +169,10 @@ class RAGEngine:
     # ---------------------------------------------------------
     async def ask(self, query: str) -> Dict[str, Any]:
         """Entry point for the API to call the Graph"""
+
+        # Log the entry point
+        log = logger.bind(query_snippet=query[:50])
+        log.info("graph_execution_started")
 
         # Initialize State
         inputs = {
@@ -157,6 +184,8 @@ class RAGEngine:
 
         # Run the Graph
         result = await self.app.ainvoke(inputs)
+
+        log.info("graph_execution_complete")
 
         # Extract Output
         return {
