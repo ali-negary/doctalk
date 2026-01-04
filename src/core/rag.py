@@ -18,13 +18,13 @@ logger = structlog.get_logger(__name__)
 # --- State Definition for LangGraph ---
 class GraphState(TypedDict):
     """
-    Represents the state of our graph.
+    Represents the flow of data through our Agent.
     """
 
     question: str
     generation: str
     documents: List[Document]
-    retry_count: int
+    is_safe: bool
 
 
 class RAGEngine:
@@ -36,7 +36,7 @@ class RAGEngine:
         self.embeddings = self.provider.get_embeddings()
         self.ingestion = IngestionEngine()
 
-        # Initialize Vector Store as None (lazy load)
+        # Vector Store is isolated per RAGEngine instance (Per User Session)
         self.vector_store: Optional[FAISS] = None
 
         # Build the Agentic Graph
@@ -45,7 +45,7 @@ class RAGEngine:
         logger.info("rag_engine_ready")
 
     # ---------------------------------------------------------
-    # 1. Ingestion Logic (Restored)
+    # 1. Ingestion Logic
     # ---------------------------------------------------------
     async def ingest_files(self, files: List[Tuple[bytes, str]]) -> int:
         loop = asyncio.get_running_loop()
@@ -64,6 +64,7 @@ class RAGEngine:
             return 0
 
         # Create or Update Vector Store
+        # This data stays in memory and is NEVER shared across sessions.
         if self.vector_store:
             self.vector_store.add_documents(all_chunks)
             log.info("vector_store_updated", added_chunks=len(all_chunks))
@@ -74,76 +75,118 @@ class RAGEngine:
         return len(all_chunks)
 
     # ---------------------------------------------------------
-    # 2. Agentic Graph Logic (The "Sophisticated" Upgrade)
+    # 2. Agentic Graph Logic (Governance & Flow)
     # ---------------------------------------------------------
     def _build_graph(self):
         """
-        Builds the LangGraph State Machine.
-        Nodes: Retrieve -> Grade -> Generate
+        Nodes: Retrieve -> Governance Check -> Generate
         """
         workflow = StateGraph(GraphState)
 
         # Define Nodes
         workflow.add_node("retrieve", self._retrieve_node)
-        workflow.add_node("grade_documents", self._grade_documents_node)
+        workflow.add_node("governance", self._governance_node)
         workflow.add_node("generate", self._generate_node)
 
-        # Define Edges
+        # Define Flow
         workflow.set_entry_point("retrieve")
-        workflow.add_edge("retrieve", "grade_documents")
+        workflow.add_edge("retrieve", "governance")
 
-        # Simple flow: Grade -> Generate -> End
-        # (In a V2, we would loop back if grade is bad)
-        workflow.add_edge("grade_documents", "generate")
+        # Conditional Edge: Only generate if Governance passes
+        workflow.add_conditional_edges(
+            "governance", self._check_safety, {"safe": "generate", "unsafe": END}
+        )
         workflow.add_edge("generate", END)
 
         return workflow.compile()
 
+    # --- Conditional Logic ---
+    def _check_safety(self, state: GraphState):
+        return "safe" if state.get("is_safe", True) else "unsafe"
+
     # --- Nodes ---
 
     async def _retrieve_node(self, state: GraphState):
-        """Node: Fetch documents from Vector Store"""
+        """Node: Fetch documents (with Chit-Chat bypass)"""
         question = state["question"]
+
+        # 1. SMART GREETING CHECK (Skip DB for "Hi")
+        greetings = {"hi", "hello", "hey", "hola", "greetings", "thanks"}
+        cleaned_q = question.lower().strip("!.,? ")
+
+        if cleaned_q in greetings:
+            logger.info("retrieval_skipped", reason="chit_chat_detected")
+            return {"documents": []}
 
         if not self.vector_store:
             logger.warn("retrieval_skipped", reason="empty_vector_store")
             return {"documents": []}
 
-        # Retrieve top 3
-        # Log the search query for debugging retrieval quality
+        # 2. RETRIEVAL
         logger.debug("retrieving_documents", query=question)
-
         retriever = self.vector_store.as_retriever(search_kwargs={"k": 3})
         documents = retriever.invoke(question)
 
         logger.info("retrieval_complete", doc_count=len(documents))
         return {"documents": documents}
 
-    async def _grade_documents_node(self, state: GraphState):
-        """Node: Filter out irrelevant documents (Grounding Check)"""
-        # For this MVP, we pass all docs through, but we could add an LLM check here.
-        # This placeholder node allows us to add 'Guardrails' later easily.
-        logger.debug("grading_documents", doc_count=len(state["documents"]))
-        return {"documents": state["documents"]}
+    async def _governance_node(self, state: GraphState):
+        """
+        Node: Governance & Data Privacy Check.
+        Ensures we don't leak "CONFIDENTIAL" documents.
+        """
+        docs = state["documents"]
+
+        for doc in docs:
+            # Simple Rule: Block if document contains specific sensitive markers
+            # In production, this would use a PII detection model (e.g., Presidio)
+            if (
+                "CONFIDENTIAL" in doc.page_content.upper()
+                or "DO NOT SHARE" in doc.page_content.upper()
+            ):
+                logger.warn("governance_violation", source=doc.metadata.get("source"))
+                return {
+                    "is_safe": False,
+                    "generation": "🛑 **Security Alert:** Access denied. One or more retrieved documents are marked CONFIDENTIAL.",
+                }
+
+        return {"is_safe": True}
 
     async def _generate_node(self, state: GraphState):
-        """Node: Generate Answer"""
+        """Node: Generate Answer with Table Formatting"""
         question = state["question"]
         documents = state["documents"]
 
+        # 1. HANDLE NO DOCS / GREETINGS
         if not documents:
-            logger.info("generation_skipped", reason="no_context")
-            return {
-                "generation": "I'm sorry, I don't have any knowledge about that yet. Please upload a document."
-            }
+            if not self.vector_store:
+                return {
+                    "generation": "Hello! I don't see any documents yet. Please **upload a file** in the sidebar to get started."
+                }
+
+            greetings = {"hi", "hello", "hey", "hola"}
+            if question.lower().strip("!.,? ") in greetings:
+                return {
+                    "generation": "Hello! Your documents are indexed and ready. **What would you like to know?**"
+                }
+
+            return {"generation": "I cannot find the answer in the provided documents."}
 
         context = "\n\n".join([doc.page_content for doc in documents])
 
-        # Prompt Engineering
+        # 2. PROMPT WITH FORMATTING INSTRUCTIONS
         prompt = ChatPromptTemplate.from_template(
-            """You are a helpful assistant discussing internal documents.
-            Answer the user's question based ONLY on the following context.
-            If the answer is not in the context, say: "I cannot find the answer in the provided documents."
+            """You are a professional AI assistant analyzing internal documents.
+
+            Instructions:
+            1. Answer the user's question based ONLY on the following context.
+            2. **Format Logic:**
+               - If the data is structured (like a ticket, invoice, or schedule), **YOU MUST USE A MARKDOWN TABLE**.
+               - Use **bold** for key entities (Names, Dates, IDs, Amounts).
+               - Keep it concise.
+            3. **Follow-up:**
+               - At the very end, add a section starting with "**Suggested Next Steps:**"
+               - List 2 short, relevant follow-up questions the user might want to ask based on this document (e.g., "What is the total tax amount?" or "Who is the passenger?").
 
             <context>
             {context}
@@ -175,16 +218,10 @@ class RAGEngine:
         log.info("graph_execution_started")
 
         # Initialize State
-        inputs = {
-            "question": query,
-            "retry_count": 0,
-            "documents": [],
-            "generation": "",
-        }
+        inputs = {"question": query, "documents": [], "generation": "", "is_safe": True}
 
         # Run the Graph
         result = await self.app.ainvoke(inputs)
-
         log.info("graph_execution_complete")
 
         # Extract Output
@@ -194,7 +231,7 @@ class RAGEngine:
             "citations": [
                 {
                     "source": d.metadata.get("source", "unknown"),
-                    "text": d.page_content[:150].replace("\n", " ") + "...",
+                    "text": d.page_content[:100].replace("\n", " ") + "...",
                 }
                 for d in result.get("documents", [])
             ],
