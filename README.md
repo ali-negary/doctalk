@@ -1,11 +1,4 @@
-Here are the final 4 Artifacts you need to complete the assignment.
-
-I have updated the README.md to specifically highlight Poetry, Testing (pytest-cov), and the Evaluation workflow as you requested.
-
-1. README.md (The Main Documentation)
-Markdown
-
-# DocTalk: Secure Document RAG System
+# 🤖 DocTalk: Discuss Your Documents
 
 **DocTalk** is a lightweight, secure Retrieval-Augmented Generation (RAG) system allowing users to chat with their internal documents (PDF, DOCX, TXT). It is designed with a "Microservices First" architecture, ready for Azure deployment.
 
