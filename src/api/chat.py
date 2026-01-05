@@ -1,7 +1,17 @@
+import time
 from contextlib import asynccontextmanager
 from typing import List, Annotated
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, status, Header, Depends
+from fastapi import (
+    FastAPI,
+    UploadFile,
+    File,
+    HTTPException,
+    status,
+    Header,
+    Depends,
+    Request,
+)
 from fastapi.middleware.cors import CORSMiddleware
 import structlog
 
@@ -57,6 +67,35 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+
+# Observability Middleware
+@app.middleware("http")
+async def add_process_time_header(request: Request, call_next):
+    # 1. Start Timer
+    start_time = time.perf_counter()
+
+    # 2. Process Request
+    response = await call_next(request)
+
+    # 3. Calculate Latency
+    process_time = time.perf_counter() - start_time
+
+    # 4. Log Metrics (Latency & Status)
+    logger.info(
+        "api_request_metrics",
+        method=request.method,
+        path=request.url.path,
+        status_code=response.status_code,
+        latency_seconds=round(process_time, 4),
+        client_ip=request.client.host if request.client else "unknown",
+    )
+
+    # 5. Add Header (Optional visibility for the frontend)
+    response.headers["X-Process-Time"] = str(process_time)
+
+    return response
+
 
 # CORS: Allow the UI (Streamlit) to talk to this API
 app.add_middleware(

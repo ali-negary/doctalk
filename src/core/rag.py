@@ -11,6 +11,7 @@ import structlog
 
 from src.core.llm_factory import LLMFactory
 from src.core.ingestion import IngestionEngine
+from src.core.observability import trace_execution
 
 # Initialize Logger
 logger = structlog.get_logger(__name__)
@@ -153,6 +154,7 @@ class RAGEngine:
 
         return {"is_safe": True}
 
+    @trace_execution
     async def _generate_node(self, state: GraphState):
         """Node: Generate Answer with Table Formatting & Self-Correction"""
         question = state["question"]
