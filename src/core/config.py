@@ -1,9 +1,12 @@
 from enum import Enum
 import logging
+from typing import Optional
 
 import structlog
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
+
+from src.core.secrets_manager import AzureSecretManager as _ASM
 
 
 class LLMProviderType(str, Enum):
@@ -20,6 +23,10 @@ class Settings(BaseSettings):
     APP_API_URL: str = "http://localhost:8000"
     LOG_LEVEL: str = "INFO"
 
+    # Azure Integration (Triggers Key Vault loading if set)
+    AZURE_KEYVAULT_URL: Optional[str] = None
+
+    # LLM Configuration
     LLM_PROVIDER: LLMProviderType = Field(default=LLMProviderType.GEMINI)
 
     GEMINI_API_KEY: str | None = None
@@ -40,6 +47,28 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL: str = "http://localhost:11434"
 
     model_config = SettingsConfigDict(env_file=".env.local", extra="ignore")
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._load_azure_secrets()
+
+    def _load_azure_secrets(self):
+        """
+        If AZURE_KEYVAULT_URL is set, hydrate secrets from Azure.
+        """
+        if self.AZURE_KEYVAULT_URL:
+            # Connect to Azure
+            manager = _ASM(self.AZURE_KEYVAULT_URL, self.APP_ENV)
+
+            # Map Azure Secret Names -> Pydantic Fields
+            secret_map = {
+                "GEMINI-API-KEY": "GEMINI_API_KEY",
+                "OPENAI-API-KEY": "OPENAI_API_KEY",
+                "PERPLEXITY-API-KEY": "PERPLEXITY_API_KEY",
+            }
+
+            # Inject values
+            manager.load_secrets_into_settings(self, secret_map)
 
 
 # Singleton instance

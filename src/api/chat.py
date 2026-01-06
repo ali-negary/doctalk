@@ -15,6 +15,7 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 import structlog
 
+from src.api.auth import verify_user
 from src.core.config import settings
 from src.core.rag import RAGEngine as _RAGEngine
 from src.core.session import SessionManager as _SessionManager
@@ -151,16 +152,28 @@ async def upload_documents(
     files: List[UploadFile] = File(...),
     rag_engine: _RAGEngine = Depends(get_rag_engine),
     x_session_id: str = Header(...),  # Capture explicitly for logging context
+    current_user: dict = Depends(verify_user),
 ):
     """
     Ingests files (PDF, DOCX, TXT) into the user's specific session.
     """
     # Bind session_id to logger so all logs in this function have it
-    log = logger.bind(session_id=x_session_id, handler="upload_documents")
+    log = logger.bind(
+        session_id=x_session_id,
+        user_oid=current_user.get("oid"),
+        handler="upload_documents",
+    )
 
     if not files:
         log.warn("upload_failed", reason="no_files_provided")
         raise HTTPException(status_code=400, detail="No files provided")
+
+    if len(files) > 5:
+        log.warn("upload_failed", reason="invalid_file_count", count=len(files))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"You uploaded {len(files)} files. Please upload between 1 and 5 files.",
+        )
 
     file_data = []
     filenames = []
@@ -196,12 +209,15 @@ async def chat(
     request: _ChatRequest,
     rag_engine: _RAGEngine = Depends(get_rag_engine),
     x_session_id: str = Header(...),  # Capture explicitly for logging context
+    current_user: dict = Depends(verify_user),
 ):
     """
     Asks a question to the user's specific RAG engine.
     """
     # Bind session_id to logger so all logs in this function have it
-    log = logger.bind(session_id=x_session_id, handler="chat")
+    log = logger.bind(
+        session_id=x_session_id, user_oid=current_user.get("oid"), handler="chat"
+    )
 
     try:
         log.info("chat_request_received", question_length=len(request.message))
